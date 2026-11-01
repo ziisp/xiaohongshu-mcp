@@ -8,7 +8,10 @@ import (
 	"runtime/debug"
 
 	"github.com/google/jsonschema-go/jsonschema"
+<<<<<<< HEAD
 
+=======
+>>>>>>> bca9c5c (fix(mcp): 发布图文时要求非空图片列表 (#849))
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 )
@@ -244,11 +247,16 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 	)
 
 	// 工具 4: 发布内容
+	publishContentSchema := publishInputSchema[PublishContentArgs]()
+	imagesSchema := publishContentSchema.Properties["images"]
+	imagesSchema.Type = "array"
+	imagesSchema.Types = nil
+	imagesSchema.MinItems = jsonschema.Ptr(1)
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "publish_content",
 			Description: "发布小红书图文内容，默认声明含AI合成内容，声明失败停止发布",
-			InputSchema: publishInputSchema[PublishContentArgs](),
+			InputSchema: publishContentSchema,
 			Annotations: &mcp.ToolAnnotations{
 				Title:           "Publish Content",
 				DestructiveHint: boolPtr(true),
