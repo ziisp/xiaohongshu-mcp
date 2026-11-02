@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -95,12 +96,15 @@ func (s *AppServer) publishHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.PublishContent(c.Request.Context(), &req)
 	if err != nil {
+		if respondPublishUnknown(c, err) {
+			return
+		}
 		respondError(c, http.StatusInternalServerError, "PUBLISH_FAILED",
 			"发布失败", err.Error())
 		return
 	}
 
-	respondSuccess(c, result, "发布成功")
+	respondSuccess(c, result, "已确认提交，公开及审核状态待确认")
 }
 
 // publishVideoHandler 发布视频内容
@@ -114,12 +118,23 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.PublishVideo(c.Request.Context(), &req)
 	if err != nil {
+		if respondPublishUnknown(c, err) {
+			return
+		}
 		respondError(c, http.StatusInternalServerError, "PUBLISH_VIDEO_FAILED",
 			"视频发布失败", err.Error())
 		return
 	}
 
-	respondSuccess(c, result, "视频发布成功")
+	respondSuccess(c, result, "已确认提交，公开及审核状态待确认")
+}
+
+func respondPublishUnknown(c *gin.Context, err error) bool {
+	if !errors.Is(err, xiaohongshu.ErrPublishResultUnknown) {
+		return false
+	}
+	respondError(c, http.StatusConflict, "PUBLISH_RESULT_UNKNOWN", err.Error(), map[string]any{"status": "unknown", "retry_safe": false})
+	return true
 }
 
 // listFeedsHandler 获取Feeds列表

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,18 @@ import (
 )
 
 // MCP 工具处理函数
+
+// 同时接受原 map 的 bool 与 MCP 类型化参数，保留缺省及显式 false。
+func parseAIGenerated(args map[string]interface{}) *bool {
+	switch value := args["ai_generated"].(type) {
+	case *bool:
+		return value
+	case bool:
+		return &value
+	default:
+		return nil
+	}
+}
 
 // parseVisibility 从 MCP 参数中解析可见范围
 func parseVisibility(args map[string]interface{}) string {
@@ -154,38 +167,24 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	visibility := parseVisibility(args)
 
 	isOriginal, _ := args["is_original"].(bool)
+	aiGenerated := parseAIGenerated(args)
 
 	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, visibility, products)
 
 	req := &PublishRequest{
-		Title:      title,
-		Content:    content,
-		Images:     imagePaths,
-		Tags:       tags,
-		ScheduleAt: scheduleAt,
-		IsOriginal: isOriginal,
-		Visibility: visibility,
-		Products:   products,
+		AIGenerated: aiGenerated,
+		Title:       title,
+		Content:     content,
+		Images:      imagePaths,
+		Tags:        tags,
+		ScheduleAt:  scheduleAt,
+		IsOriginal:  isOriginal,
+		Visibility:  visibility,
+		Products:    products,
 	}
 
 	result, err := s.xiaohongshuService.PublishContent(ctx, req)
-	if err != nil {
-		return &MCPToolResult{
-			Content: []MCPContent{{
-				Type: "text",
-				Text: "发布失败: " + err.Error(),
-			}},
-			IsError: true,
-		}
-	}
-
-	resultText := fmt.Sprintf("内容发布成功: %+v", result)
-	return &MCPToolResult{
-		Content: []MCPContent{{
-			Type: "text",
-			Text: resultText,
-		}},
-	}
+	return publishToolResult(result, err)
 }
 
 // handlePublishVideo 处理发布视频内容（仅本地单个视频文件）
@@ -195,6 +194,7 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	title, _ := args["title"].(string)
 	content, _ := args["content"].(string)
 	videoPath, _ := args["video"].(string)
+	aiGenerated := parseAIGenerated(args)
 	tagsInterface, _ := args["tags"].([]interface{})
 	productsInterface, _ := args["products"].([]interface{})
 
@@ -213,13 +213,7 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	}
 
 	if videoPath == "" {
-		return &MCPToolResult{
-			Content: []MCPContent{{
-				Type: "text",
-				Text: "发布失败: 缺少本地视频文件路径",
-			}},
-			IsError: true,
-		}
+		return publishToolResult(nil, errors.New("缺少本地视频文件路径"))
 	}
 
 	scheduleAt, _ := args["schedule_at"].(string)
@@ -228,33 +222,35 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 定时: %s, visibility: %s, 商品: %v", title, len(tags), scheduleAt, visibility, products)
 
 	req := &PublishVideoRequest{
-		Title:      title,
-		Content:    content,
-		Video:      videoPath,
-		Tags:       tags,
-		ScheduleAt: scheduleAt,
-		Visibility: visibility,
-		Products:   products,
+		AIGenerated: aiGenerated,
+		Title:       title,
+		Content:     content,
+		Video:       videoPath,
+		Tags:        tags,
+		ScheduleAt:  scheduleAt,
+		Visibility:  visibility,
+		Products:    products,
 	}
 
 	result, err := s.xiaohongshuService.PublishVideo(ctx, req)
+	return publishToolResult(result, err)
+}
+
+// 区分点击前失败和点击后未知，供网关可靠保存状态，不能按错误文本猜测。
+func publishToolResult(result any, err error) *MCPToolResult {
+	state := map[string]any{"status": "submitted", "retry_safe": false}
+	text := fmt.Sprintf("已确认提交（公开及审核状态待确认）: %+v", result)
+	isError := false
 	if err != nil {
-		return &MCPToolResult{
-			Content: []MCPContent{{
-				Type: "text",
-				Text: "发布失败: " + err.Error(),
-			}},
-			IsError: true,
+		if errors.Is(err, xiaohongshu.ErrPublishResultUnknown) {
+			state["status"] = "unknown"
+			text = err.Error()
+		} else {
+			state["status"], state["phase"], state["retry_safe"] = "failed", "pre_submit", true
+			text, isError = "提交前失败，未点击发布: "+err.Error(), true
 		}
 	}
-
-	resultText := fmt.Sprintf("视频发布成功: %+v", result)
-	return &MCPToolResult{
-		Content: []MCPContent{{
-			Type: "text",
-			Text: resultText,
-		}},
-	}
+	return &MCPToolResult{Content: []MCPContent{{Type: "text", Text: text}}, IsError: isError, StructuredContent: state}
 }
 
 // handleListFeeds 处理获取Feeds列表

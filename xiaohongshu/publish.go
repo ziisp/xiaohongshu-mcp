@@ -19,6 +19,7 @@ import (
 
 // PublishImageContent 发布图文内容
 type PublishImageContent struct {
+	AIGenerated  *bool // 默认声明 AI 合成内容，显式 false 才跳过
 	Title        string
 	Content      string
 	Tags         []string
@@ -94,7 +95,7 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 
 	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, visibility=%s, products=%v", content.Title, len(content.ImagePaths), tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products)
 
-	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products); err != nil {
+	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.AIGenerated); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -345,7 +346,7 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string) error {
+func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string, aiGenerated *bool) error {
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
 		return errors.Wrap(err, "查找标题输入框失败")
@@ -407,29 +408,18 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
+	if aiGenerated == nil || *aiGenerated {
+		if err := setAIContentDeclaration(page); err != nil {
+			return errors.Wrap(err, "AI 内容声明未确认，已停止发布")
+		}
+	}
+
 	if err := clickPublishButton(page); err != nil {
 		return err
 	}
 
-	// 校验发布真的成功：成功后创作平台会跳转离开发布页；未跳转则判定失败，
-	// 消除"点了发布按钮就算成功"的假阳性。
+	// 只接受可信成功页；点击后的超时不能当作确定未提交。
 	return waitPublishSuccess(page, 15*time.Second)
-}
-
-// waitPublishSuccess 轮询等待发布成功的信号：小红书发布成功后会跳转离开发布表单页
-// （URL 不再含 /publish/publish）。超时仍未跳转 → 判定发布失败。
-func waitPublishSuccess(page *rod.Page, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if info, err := page.Info(); err == nil && !strings.Contains(info.URL, "/publish/publish") {
-			slog.Info("发布成功，已跳转离开发布页", "url", info.URL)
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return errors.New("发布未确认成功：点击发布后未跳转离开发布页（可能校验未过或被拦截）")
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
 }
 
 type publishButton struct {
@@ -448,7 +438,7 @@ func clickPublishButton(page *rod.Page) error {
 	}
 
 	if err := humanize.Click(btn.elem); err != nil {
-		return errors.Wrap(err, "点击发布按钮失败")
+		return publishUnknown(errors.Wrap(err, "点击发布按钮失败"))
 	}
 	return nil
 }
@@ -462,10 +452,17 @@ func waitForPublishButtonClickable(page *rod.Page, maxWait time.Duration) (*publ
 	slog.Info("开始等待发布按钮可点击")
 
 	for time.Since(start) < maxWait {
+		if err := page.GetContext().Err(); err != nil {
+			return nil, err
+		}
 		btn, disabledReason, err := findPublishButton(page)
 		if err != nil {
 			slog.Warn("查找发布按钮失败，继续等待", "error", err)
-			time.Sleep(interval)
+			select {
+			case <-page.GetContext().Done():
+				return nil, page.GetContext().Err()
+			case <-time.After(interval):
+			}
 			continue
 		}
 		if btn != nil && disabledReason == "" {
@@ -474,7 +471,11 @@ func waitForPublishButtonClickable(page *rod.Page, maxWait time.Duration) (*publ
 		if disabledReason != "" {
 			lastDisabledReason = disabledReason
 		}
-		time.Sleep(interval)
+		select {
+		case <-page.GetContext().Done():
+			return nil, page.GetContext().Err()
+		case <-time.After(interval):
+		}
 	}
 
 	if lastDisabledReason != "" {
@@ -584,7 +585,7 @@ func clickPublishWidget(page *rod.Page, widget *rod.Element) error {
 	x := minX + (maxX-minX)*0.65
 	y := minY + (maxY-minY)/2
 	if err := humanize.ClickAt(page, proto.Point{X: x, Y: y}); err != nil {
-		return errors.Wrap(err, "点击新版发布按钮失败")
+		return publishUnknown(errors.Wrap(err, "点击新版发布按钮失败"))
 	}
 	return nil
 }

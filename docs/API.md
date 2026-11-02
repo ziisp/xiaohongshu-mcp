@@ -169,6 +169,10 @@ DELETE /api/v1/login/cookies
 
 ### 3. 内容发布
 
+以下 REST 接口同步执行。成功仅表示在可信创作平台 `/publish/success` 页面确认提交，不保证已公开或审核通过。点击发布后的确认超时返回 HTTP 409、`code: PUBLISH_RESULT_UNKNOWN`、`details: {"status":"unknown","retry_safe":false}`；先检查平台笔记管理，不能直接重试。图文与视频共用此规则。
+
+本部署域名 MCP 网关的两个发布工具另采用后台作业：快速返回 `publication_id` 和状态；通过 `get_publish_status`（可选 `publication_id`、`wait_seconds: 0..15`）查询终态。`queued/running` 不等于提交成功；`submitted` 已确认提交；`failed` 在提交前失败、`retry_safe=true`；`unknown` 不可自动重发。省略作业号列出本账号最近 10 次作业。可选 `idempotency_key` 标识一次发布意图，重试复用同一键；相同内容的在途/未知作业不能用换键绕过。此能力不改变上述 REST 请求格式。
+
 #### 3.1 发布图文内容
 
 发布图文笔记内容到小红书。
@@ -197,6 +201,7 @@ Content-Type: application/json
 - `title` (string, required): 笔记标题
 - `content` (string, required): 笔记内容
 - `images` (array, required): 图片URL数组，至少包含一张图片
+- `ai_generated` (boolean, optional, default `true`): 省略或 `true` 时在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。与 `is_original` 不同，也不是向正文添加文字。
 - `tags` (array, optional): 标签数组
 - `schedule_at` (string, optional): 定时发布时间，ISO8601 格式如 `2024-01-20T10:30:00+08:00`，支持1小时至14天内。不填则立即发布
 - `is_original` (boolean, optional): 是否声明原创，`true` 为声明原创，不填则不声明
@@ -211,9 +216,9 @@ Content-Type: application/json
     "title": "笔记标题",
     "content": "笔记内容",
     "images": 2,
-    "status": "发布完成"
+    "status": "已确认提交，公开及审核状态待确认"
   },
-  "message": "发布成功"
+  "message": "已确认提交，公开及审核状态待确认"
 }
 ```
 
@@ -242,6 +247,7 @@ Content-Type: application/json
 - `title` (string, required): 视频标题
 - `content` (string, required): 视频内容描述
 - `video` (string, required): 本地视频文件绝对路径
+- `ai_generated` (boolean, optional, default `true`): 省略或 `true` 时在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。
 - `tags` (array, optional): 标签数组
 - `schedule_at` (string, optional): 定时发布时间，ISO8601 格式如 `2024-01-20T10:30:00+08:00`，支持1小时至14天内。不填则立即发布
 - `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
@@ -255,9 +261,9 @@ Content-Type: application/json
     "title": "视频标题",
     "content": "视频内容描述",
     "video": "/Users/username/Videos/video.mp4",
-    "status": "发布完成"
+    "status": "已确认提交，公开及审核状态待确认"
   },
-  "message": "视频发布成功"
+  "message": "已确认提交，公开及审核状态待确认"
 }
 ```
 

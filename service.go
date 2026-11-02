@@ -30,14 +30,15 @@ func NewXiaohongshuService() *XiaohongshuService {
 
 // PublishRequest 发布请求
 type PublishRequest struct {
-	Title      string   `json:"title" binding:"required"`
-	Content    string   `json:"content" binding:"required"`
-	Images     []string `json:"images" binding:"required,min=1"`
-	Tags       []string `json:"tags,omitempty"`
-	ScheduleAt string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
-	IsOriginal bool     `json:"is_original,omitempty"` // 是否声明原创
-	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+	AIGenerated *bool    `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
+	Title       string   `json:"title" binding:"required"`
+	Content     string   `json:"content" binding:"required"`
+	Images      []string `json:"images" binding:"required,min=1"`
+	Tags        []string `json:"tags,omitempty"`
+	ScheduleAt  string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
+	IsOriginal  bool     `json:"is_original,omitempty"` // 是否声明原创
+	Visibility  string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products    []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 }
 
 // LoginStatusResponse 登录状态响应
@@ -64,13 +65,14 @@ type PublishResponse struct {
 
 // PublishVideoRequest 发布视频请求（仅支持本地单个视频文件）
 type PublishVideoRequest struct {
-	Title      string   `json:"title" binding:"required"`
-	Content    string   `json:"content" binding:"required"`
-	Video      string   `json:"video" binding:"required"`
-	Tags       []string `json:"tags,omitempty"`
-	ScheduleAt string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
-	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+	AIGenerated *bool    `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
+	Title       string   `json:"title" binding:"required"`
+	Content     string   `json:"content" binding:"required"`
+	Video       string   `json:"video" binding:"required"`
+	Tags        []string `json:"tags,omitempty"`
+	ScheduleAt  string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
+	Visibility  string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products    []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 }
 
 // PublishVideoResponse 发布视频响应
@@ -239,6 +241,7 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	}
 
 	content := xiaohongshu.PublishImageContent{
+		AIGenerated:  req.AIGenerated,
 		Title:        req.Title,
 		Content:      req.Content,
 		Tags:         req.Tags,
@@ -258,7 +261,7 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 		Title:   req.Title,
 		Content: req.Content,
 		Images:  len(imagePaths),
-		Status:  "发布完成",
+		Status:  "已确认提交，公开及审核状态待确认",
 	}
 
 	return response, nil
@@ -327,6 +330,7 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	}
 
 	content := xiaohongshu.PublishVideoContent{
+		AIGenerated:  req.AIGenerated,
 		Title:        req.Title,
 		Content:      req.Content,
 		Tags:         req.Tags,
@@ -344,7 +348,7 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 		Title:   req.Title,
 		Content: req.Content,
 		Video:   req.Video,
-		Status:  "发布完成",
+		Status:  "已确认提交，公开及审核状态待确认",
 	}
 	return resp, nil
 }

@@ -1,0 +1,22 @@
+[Unit]
+Description=OAuth MCP gateway with durable publication status
+After=network-online.target xiaohongshu-mcp.service
+Requires=xiaohongshu-mcp.service
+
+[Service]
+Type=simple
+User=xhs-gateway
+Group=xhs-gateway
+EnvironmentFile=/etc/xhs-mcp-gateway/domain.env
+ExecStart=/opt/xhs-mcp-gateway/venv/bin/python -m uvicorn gateway:create_app --factory --app-dir /opt/xhs-mcp-gateway --host 127.0.0.1 --port 18062 --no-access-log --no-proxy-headers --log-level warning
+Restart=on-failure
+RestartSec=3
+StateDirectory=xhs-mcp-domain-gateway
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

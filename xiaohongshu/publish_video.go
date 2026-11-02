@@ -14,6 +14,7 @@ import (
 
 // PublishVideoContent 发布视频内容
 type PublishVideoContent struct {
+	AIGenerated  *bool // 默认声明 AI 合成内容，显式 false 才跳过
 	Title        string
 	Content      string
 	Tags         []string
@@ -68,7 +69,7 @@ func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoCo
 		return errors.Wrap(err, "小红书上传视频失败")
 	}
 
-	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.Visibility, content.Products); err != nil {
+	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.Visibility, content.Products, content.AIGenerated); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
@@ -105,7 +106,7 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 }
 
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, visibility string, products []string) error {
+func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, visibility string, products []string, aiGenerated *bool) error {
 	// 标题
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
@@ -151,10 +152,16 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
+	if aiGenerated == nil || *aiGenerated {
+		if err := setAIContentDeclaration(page); err != nil {
+			return errors.Wrap(err, "AI 内容声明未确认，已停止发布")
+		}
+	}
+
 	if err := clickPublishButton(page); err != nil {
 		return err
 	}
 
-	// 校验发布真的成功（成功跳转离开发布页），未跳转判失败——消除假成功
+	// 与图文使用同一可信提交信号。
 	return waitPublishSuccess(page, 15*time.Second)
 }
