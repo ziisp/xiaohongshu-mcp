@@ -29,6 +29,12 @@ func parseAIGenerated(args map[string]interface{}) *bool {
 }
 
 // parseVisibility 从 MCP 参数中解析可见范围
+func parseDeclarationDetails(args map[string]interface{}) *xiaohongshu.ContentDeclarationDetails {
+	details, _ := args["declaration_details"].(*xiaohongshu.ContentDeclarationDetails)
+	return details
+}
+
+// parseVisibility 从 MCP 参数中解析可见范围
 func parseVisibility(args map[string]interface{}) string {
 	v, ok := args["visibility"]
 	if !ok || v == nil {
@@ -168,19 +174,22 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 
 	isOriginal, _ := args["is_original"].(bool)
 	aiGenerated := parseAIGenerated(args)
+	declaration, _ := args["content_declaration"].(string)
 
 	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, visibility, products)
 
 	req := &PublishRequest{
-		AIGenerated: aiGenerated,
-		Title:       title,
-		Content:     content,
-		Images:      imagePaths,
-		Tags:        tags,
-		ScheduleAt:  scheduleAt,
-		IsOriginal:  isOriginal,
-		Visibility:  visibility,
-		Products:    products,
+		DeclarationDetails: parseDeclarationDetails(args),
+		ContentDeclaration: declaration,
+		AIGenerated:        aiGenerated,
+		Title:              title,
+		Content:            content,
+		Images:             imagePaths,
+		Tags:               tags,
+		ScheduleAt:         scheduleAt,
+		IsOriginal:         isOriginal,
+		Visibility:         visibility,
+		Products:           products,
 	}
 
 	result, err := s.xiaohongshuService.PublishContent(ctx, req)
@@ -195,6 +204,7 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	content, _ := args["content"].(string)
 	videoPath, _ := args["video"].(string)
 	aiGenerated := parseAIGenerated(args)
+	declaration, _ := args["content_declaration"].(string)
 	tagsInterface, _ := args["tags"].([]interface{})
 	productsInterface, _ := args["products"].([]interface{})
 
@@ -223,15 +233,17 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(tags), scheduleAt, isOriginal, visibility, products)
 
 	req := &PublishVideoRequest{
-		AIGenerated: aiGenerated,
-		Title:       title,
-		Content:     content,
-		Video:       videoPath,
-		Tags:        tags,
-		ScheduleAt:  scheduleAt,
-		IsOriginal:  isOriginal,
-		Visibility:  visibility,
-		Products:    products,
+		DeclarationDetails: parseDeclarationDetails(args),
+		ContentDeclaration: declaration,
+		AIGenerated:        aiGenerated,
+		Title:              title,
+		Content:            content,
+		Video:              videoPath,
+		Tags:               tags,
+		ScheduleAt:         scheduleAt,
+		IsOriginal:         isOriginal,
+		Visibility:         visibility,
+		Products:           products,
 	}
 
 	result, err := s.xiaohongshuService.PublishVideo(ctx, req)

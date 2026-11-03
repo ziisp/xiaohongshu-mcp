@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
+	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
 
 // Helper functions for annotation pointers
@@ -26,35 +27,59 @@ func publishInputSchema[T any]() *jsonschema.Schema {
 	ai.Type = "boolean"
 	ai.Types = nil
 	ai.Default = json.RawMessage(`true`)
+	declaration := schema.Properties["content_declaration"]
+	declaration.Type = "string"
+	declaration.Types = nil
+	for _, choice := range xiaohongshu.ContentDeclarationChoices() {
+		declaration.Enum = append(declaration.Enum, choice)
+	}
 	return schema
+}
+
+// SDK 会给 typed 参数注入 schema 默认值；原始请求仍保留调用者是否显式传入 AI。
+func explicitPublishAI(req *mcp.CallToolRequest) (*bool, error) {
+	var raw struct {
+		AIGenerated *bool `json:"ai_generated"`
+	}
+	if len(req.Params.Arguments) == 0 {
+		return nil, nil
+	}
+	if err := json.Unmarshal(req.Params.Arguments, &raw); err != nil {
+		return nil, fmt.Errorf("解析 AI 参数失败: %w", err)
+	}
+	return raw.AIGenerated, nil
 }
 
 // MCP 工具参数结构体定义
 
 // PublishContentArgs 发布内容的参数
 type PublishContentArgs struct {
-	AIGenerated *bool    `json:"ai_generated,omitempty" jsonschema:"是否声明含AI合成内容，默认开启。省略或true时必须确认平台AI声明已选中，否则停止发布；仅用户明确要求关闭时传false。与原创声明不同"`
-	Title       string   `json:"title" jsonschema:"内容标题（小红书限制：最多20个中文字或英文单词）"`
-	Content     string   `json:"content" jsonschema:"正文内容，不包含以#开头的标签内容，所有话题标签都用tags参数来生成和提供即可"`
-	Images      []string `json:"images" jsonschema:"图片路径列表（至少需要1张图片）。支持两种方式：1. HTTP/HTTPS图片链接（自动下载）；2. 本地图片绝对路径（推荐，如:/Users/user/image.jpg）"`
-	Tags        []string `json:"tags,omitempty" jsonschema:"话题标签列表（可选参数），如 [美食, 旅行, 生活]"`
-	ScheduleAt  string   `json:"schedule_at,omitempty" jsonschema:"定时发布时间（可选），ISO8601格式如 2024-01-20T10:30:00+08:00，支持1小时至14天内。不填则立即发布"`
-	IsOriginal  bool     `json:"is_original,omitempty" jsonschema:"是否声明原创（可选），true为声明原创，false或不填则不声明"`
-	Visibility  string   `json:"visibility,omitempty" jsonschema:"可见范围（可选），支持: 公开可见(默认)、仅自己可见、仅互关好友可见。不填则默认公开可见"`
-	Products    []string `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
+	DeclarationDetails *xiaohongshu.ContentDeclarationDetails `json:"declaration_details,omitempty" jsonschema:"来源声明的实际必填信息；自主拍摄填写地点和日期，来源转载填写媒体名称；不得编造"`
+	ContentDeclaration string                                 `json:"content_declaration,omitempty" jsonschema:"平台内容声明，单选；省略时默认AI。明确选其他项时不要同时传ai_generated为true。选择失败或未确认选中则停止发布；无需声明会清除该控件。与is_original原创声明独立"`
+	AIGenerated        *bool                                  `json:"ai_generated,omitempty" jsonschema:"兼容旧AI参数。未指定content_declaration时默认开启；显式true或false不得与内容声明冲突。仅传false且未指定声明时不主动修改控件；与原创声明独立"`
+	Title              string                                 `json:"title" jsonschema:"内容标题（小红书限制：最多20个中文字或英文单词）"`
+	Content            string                                 `json:"content" jsonschema:"正文内容，不包含以#开头的标签内容，所有话题标签都用tags参数来生成和提供即可"`
+	Images             []string                               `json:"images" jsonschema:"图片路径列表（至少需要1张图片）。支持两种方式：1. HTTP/HTTPS图片链接（自动下载）；2. 本地图片绝对路径（推荐，如:/Users/user/image.jpg）"`
+	Tags               []string                               `json:"tags,omitempty" jsonschema:"话题标签列表（可选参数），如 [美食, 旅行, 生活]"`
+	ScheduleAt         string                                 `json:"schedule_at,omitempty" jsonschema:"定时发布时间（可选），ISO8601格式如 2024-01-20T10:30:00+08:00，支持1小时至14天内。不填则立即发布"`
+	IsOriginal         bool                                   `json:"is_original,omitempty" jsonschema:"是否声明原创（可选），true为声明原创，false或不填则不声明"`
+	Visibility         string                                 `json:"visibility,omitempty" jsonschema:"可见范围（可选），支持: 公开可见(默认)、仅自己可见、仅互关好友可见。不填则默认公开可见"`
+	Products           []string                               `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
 }
 
 // PublishVideoArgs 发布视频的参数（仅支持本地单个视频文件）
 type PublishVideoArgs struct {
-	AIGenerated *bool    `json:"ai_generated,omitempty" jsonschema:"是否声明含AI合成内容，默认开启。省略或true时必须确认平台AI声明已选中，否则停止发布；仅用户明确要求关闭时传false。与原创声明不同"`
-	Title       string   `json:"title" jsonschema:"内容标题（小红书限制：最多20个中文字或英文单词）"`
-	Content     string   `json:"content" jsonschema:"正文内容，不包含以#开头的标签内容，所有话题标签都用tags参数来生成和提供即可"`
-	Video       string   `json:"video" jsonschema:"本地视频绝对路径（仅支持单个视频文件，如:/Users/user/video.mp4）"`
-	Tags        []string `json:"tags,omitempty" jsonschema:"话题标签列表（可选参数），如 [美食, 旅行, 生活]"`
-	ScheduleAt  string   `json:"schedule_at,omitempty" jsonschema:"定时发布时间（可选），ISO8601格式如 2024-01-20T10:30:00+08:00，支持1小时至14天内。不填则立即发布"`
-	IsOriginal  bool     `json:"is_original,omitempty" jsonschema:"是否声明原创，true时确认原创声明，否则停止发布；省略或false不声明。与AI声明独立"`
-	Visibility  string   `json:"visibility,omitempty" jsonschema:"可见范围（可选），支持: 公开可见(默认)、仅自己可见、仅互关好友可见。不填则默认公开可见"`
-	Products    []string `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
+	DeclarationDetails *xiaohongshu.ContentDeclarationDetails `json:"declaration_details,omitempty" jsonschema:"来源声明的实际必填信息；自主拍摄填写地点和日期，来源转载填写媒体名称；不得编造"`
+	ContentDeclaration string                                 `json:"content_declaration,omitempty" jsonschema:"平台内容声明，单选；省略时默认AI。明确选其他项时不要同时传ai_generated为true。选择失败或未确认选中则停止发布；无需声明会清除该控件。与is_original原创声明独立"`
+	AIGenerated        *bool                                  `json:"ai_generated,omitempty" jsonschema:"兼容旧AI参数。未指定content_declaration时默认开启；显式true或false不得与内容声明冲突。仅传false且未指定声明时不主动修改控件；与原创声明独立"`
+	Title              string                                 `json:"title" jsonschema:"内容标题（小红书限制：最多20个中文字或英文单词）"`
+	Content            string                                 `json:"content" jsonschema:"正文内容，不包含以#开头的标签内容，所有话题标签都用tags参数来生成和提供即可"`
+	Video              string                                 `json:"video" jsonschema:"本地视频绝对路径（仅支持单个视频文件，如:/Users/user/video.mp4）"`
+	Tags               []string                               `json:"tags,omitempty" jsonschema:"话题标签列表（可选参数），如 [美食, 旅行, 生活]"`
+	ScheduleAt         string                                 `json:"schedule_at,omitempty" jsonschema:"定时发布时间（可选），ISO8601格式如 2024-01-20T10:30:00+08:00，支持1小时至14天内。不填则立即发布"`
+	IsOriginal         bool                                   `json:"is_original,omitempty" jsonschema:"是否声明原创，true时确认原创声明，否则停止发布；省略或false不声明。与AI声明独立"`
+	Visibility         string                                 `json:"visibility,omitempty" jsonschema:"可见范围（可选），支持: 公开可见(默认)、仅自己可见、仅互关好友可见。不填则默认公开可见"`
+	Products           []string                               `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
 }
 
 // SearchFeedsArgs 搜索内容的参数
@@ -261,17 +286,23 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("publish_content", func(ctx context.Context, req *mcp.CallToolRequest, args PublishContentArgs) (*mcp.CallToolResult, any, error) {
+			ai, err := explicitPublishAI(req)
+			if err != nil {
+				return convertToMCPResult(publishToolResult(nil, err)), nil, nil
+			}
 			// 转换参数格式到现有的 handler
 			argsMap := map[string]interface{}{
-				"title":        args.Title,
-				"content":      args.Content,
-				"images":       convertStringsToInterfaces(args.Images),
-				"ai_generated": args.AIGenerated,
-				"tags":         convertStringsToInterfaces(args.Tags),
-				"schedule_at":  args.ScheduleAt,
-				"is_original":  args.IsOriginal,
-				"visibility":   args.Visibility,
-				"products":     convertStringsToInterfaces(args.Products),
+				"declaration_details": args.DeclarationDetails,
+				"title":               args.Title,
+				"content":             args.Content,
+				"images":              convertStringsToInterfaces(args.Images),
+				"ai_generated":        ai,
+				"content_declaration": args.ContentDeclaration,
+				"tags":                convertStringsToInterfaces(args.Tags),
+				"schedule_at":         args.ScheduleAt,
+				"is_original":         args.IsOriginal,
+				"visibility":          args.Visibility,
+				"products":            convertStringsToInterfaces(args.Products),
 			}
 			result := appServer.handlePublishContent(ctx, argsMap)
 			return convertToMCPResult(result), nil, nil
@@ -439,16 +470,22 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("publish_with_video", func(ctx context.Context, req *mcp.CallToolRequest, args PublishVideoArgs) (*mcp.CallToolResult, any, error) {
+			ai, err := explicitPublishAI(req)
+			if err != nil {
+				return convertToMCPResult(publishToolResult(nil, err)), nil, nil
+			}
 			argsMap := map[string]interface{}{
-				"title":        args.Title,
-				"content":      args.Content,
-				"video":        args.Video,
-				"is_original":  args.IsOriginal,
-				"ai_generated": args.AIGenerated,
-				"tags":         convertStringsToInterfaces(args.Tags),
-				"schedule_at":  args.ScheduleAt,
-				"visibility":   args.Visibility,
-				"products":     convertStringsToInterfaces(args.Products),
+				"declaration_details": args.DeclarationDetails,
+				"title":               args.Title,
+				"content":             args.Content,
+				"video":               args.Video,
+				"is_original":         args.IsOriginal,
+				"ai_generated":        ai,
+				"content_declaration": args.ContentDeclaration,
+				"tags":                convertStringsToInterfaces(args.Tags),
+				"schedule_at":         args.ScheduleAt,
+				"visibility":          args.Visibility,
+				"products":            convertStringsToInterfaces(args.Products),
 			}
 			result := appServer.handlePublishVideo(ctx, argsMap)
 			return convertToMCPResult(result), nil, nil

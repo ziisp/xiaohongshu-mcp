@@ -30,15 +30,17 @@ func NewXiaohongshuService() *XiaohongshuService {
 
 // PublishRequest 发布请求
 type PublishRequest struct {
-	AIGenerated *bool    `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
-	Title       string   `json:"title" binding:"required"`
-	Content     string   `json:"content" binding:"required"`
-	Images      []string `json:"images" binding:"required,min=1"`
-	Tags        []string `json:"tags,omitempty"`
-	ScheduleAt  string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
-	IsOriginal  bool     `json:"is_original,omitempty"` // 是否声明原创
-	Visibility  string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products    []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+	DeclarationDetails *xiaohongshu.ContentDeclarationDetails `json:"declaration_details,omitempty"`
+	ContentDeclaration string                                 `json:"content_declaration,omitempty"`
+	AIGenerated        *bool                                  `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
+	Title              string                                 `json:"title" binding:"required"`
+	Content            string                                 `json:"content" binding:"required"`
+	Images             []string                               `json:"images" binding:"required,min=1"`
+	Tags               []string                               `json:"tags,omitempty"`
+	ScheduleAt         string                                 `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
+	IsOriginal         bool                                   `json:"is_original,omitempty"` // 是否声明原创
+	Visibility         string                                 `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products           []string                               `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 }
 
 // LoginStatusResponse 登录状态响应
@@ -57,31 +59,36 @@ type LoginQrcodeResponse struct {
 
 // PublishResponse 发布响应
 type PublishResponse struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Images  int    `json:"images"`
-	Status  string `json:"status"`
+	ContentDeclaration string `json:"content_declaration,omitempty"`
+	Title              string `json:"title"`
+	Content            string `json:"content"`
+	Images             int    `json:"images"`
+	Status             string `json:"status"`
 }
 
 // PublishVideoRequest 发布视频请求（仅支持本地单个视频文件）
 type PublishVideoRequest struct {
-	AIGenerated *bool    `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
-	Title       string   `json:"title" binding:"required"`
-	Content     string   `json:"content" binding:"required"`
-	Video       string   `json:"video" binding:"required"`
-	Tags        []string `json:"tags,omitempty"`
-	ScheduleAt  string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
-	IsOriginal  bool     `json:"is_original,omitempty"` // 是否声明原创
-	Visibility  string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products    []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+	DeclarationDetails *xiaohongshu.ContentDeclarationDetails `json:"declaration_details,omitempty"`
+	ContentDeclaration string                                 `json:"content_declaration,omitempty"`
+	AIGenerated        *bool                                  `json:"ai_generated,omitempty"` // 声明含 AI 合成内容，失败中止发布
+	Title              string                                 `json:"title" binding:"required"`
+	Content            string                                 `json:"content" binding:"required"`
+	Video              string                                 `json:"video" binding:"required"`
+	Tags               []string                               `json:"tags,omitempty"`
+	ScheduleAt         string                                 `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
+	IsOriginal         bool                                   `json:"is_original,omitempty"` // 是否声明原创
+	Visibility         string                                 `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products           []string                               `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 }
 
 // PublishVideoResponse 发布视频响应
 type PublishVideoResponse struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Video   string `json:"video"`
-	Status  string `json:"status"`
+	ContentDeclaration string `json:"content_declaration,omitempty"`
+	IsOriginal         bool   `json:"is_original,omitempty"`
+	Title              string `json:"title"`
+	Content            string `json:"content"`
+	Video              string `json:"video"`
+	Status             string `json:"status"`
 }
 
 // FeedsListResponse Feeds列表响应
@@ -206,6 +213,13 @@ func (s *XiaohongshuService) waitScanInBackground(
 
 // PublishContent 发布内容
 func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishRequest) (*PublishResponse, error) {
+	declaration, err := xiaohongshu.ResolveContentDeclaration(req.ContentDeclaration, req.AIGenerated)
+	if err != nil {
+		return nil, err
+	}
+	if err := xiaohongshu.ValidateContentDeclarationDetails(declaration, req.DeclarationDetails); err != nil {
+		return nil, err
+	}
 	// 验证标题长度（小红书限制：最大20个字）
 	if xhsutil.CalcTitleLength(req.Title) > 20 {
 		return nil, fmt.Errorf("标题长度超过限制")
@@ -242,15 +256,17 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	}
 
 	content := xiaohongshu.PublishImageContent{
-		AIGenerated:  req.AIGenerated,
-		Title:        req.Title,
-		Content:      req.Content,
-		Tags:         req.Tags,
-		ImagePaths:   imagePaths,
-		ScheduleTime: scheduleTime,
-		IsOriginal:   req.IsOriginal,
-		Visibility:   req.Visibility,
-		Products:     req.Products,
+		DeclarationDetails: req.DeclarationDetails,
+		ContentDeclaration: declaration,
+		AIGenerated:        req.AIGenerated,
+		Title:              req.Title,
+		Content:            req.Content,
+		Tags:               req.Tags,
+		ImagePaths:         imagePaths,
+		ScheduleTime:       scheduleTime,
+		IsOriginal:         req.IsOriginal,
+		Visibility:         req.Visibility,
+		Products:           req.Products,
 	}
 
 	if err := s.publishContent(ctx, content); err != nil {
@@ -259,10 +275,11 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	}
 
 	response := &PublishResponse{
-		Title:   req.Title,
-		Content: req.Content,
-		Images:  len(imagePaths),
-		Status:  "已确认提交，公开及审核状态待确认",
+		ContentDeclaration: declaration,
+		Title:              req.Title,
+		Content:            req.Content,
+		Images:             len(imagePaths),
+		Status:             "已确认提交，公开及审核状态待确认",
 	}
 
 	return response, nil
@@ -292,6 +309,13 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 
 // PublishVideo 发布视频（本地文件）
 func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideoRequest) (*PublishVideoResponse, error) {
+	declaration, err := xiaohongshu.ResolveContentDeclaration(req.ContentDeclaration, req.AIGenerated)
+	if err != nil {
+		return nil, err
+	}
+	if err := xiaohongshu.ValidateContentDeclarationDetails(declaration, req.DeclarationDetails); err != nil {
+		return nil, err
+	}
 	// 标题长度校验（小红书限制：最大20个字）
 	if xhsutil.CalcTitleLength(req.Title) > 20 {
 		return nil, fmt.Errorf("标题长度超过限制")
@@ -331,15 +355,17 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	}
 
 	content := xiaohongshu.PublishVideoContent{
-		AIGenerated:  req.AIGenerated,
-		Title:        req.Title,
-		Content:      req.Content,
-		Tags:         req.Tags,
-		VideoPath:    req.Video,
-		ScheduleTime: scheduleTime,
-		IsOriginal:   req.IsOriginal,
-		Visibility:   req.Visibility,
-		Products:     req.Products,
+		DeclarationDetails: req.DeclarationDetails,
+		ContentDeclaration: declaration,
+		AIGenerated:        req.AIGenerated,
+		Title:              req.Title,
+		Content:            req.Content,
+		Tags:               req.Tags,
+		VideoPath:          req.Video,
+		ScheduleTime:       scheduleTime,
+		IsOriginal:         req.IsOriginal,
+		Visibility:         req.Visibility,
+		Products:           req.Products,
 	}
 
 	if err := s.publishVideo(ctx, content); err != nil {
@@ -347,10 +373,12 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	}
 
 	resp := &PublishVideoResponse{
-		Title:   req.Title,
-		Content: req.Content,
-		Video:   req.Video,
-		Status:  "已确认提交，公开及审核状态待确认",
+		ContentDeclaration: declaration,
+		IsOriginal:         req.IsOriginal,
+		Title:              req.Title,
+		Content:            req.Content,
+		Video:              req.Video,
+		Status:             "已确认提交，公开及审核状态待确认",
 	}
 	return resp, nil
 }

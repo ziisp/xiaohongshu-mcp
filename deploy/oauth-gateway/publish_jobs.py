@@ -4,6 +4,7 @@ No automatic replay: interrupted dispatch is unknown until checked on the platfo
 The single-process lock is essential: two workers must not recover each other's jobs.
 """
 import asyncio
+import datetime
 import fcntl
 import hashlib
 import json
@@ -14,6 +15,8 @@ import uuid
 from pathlib import Path
 
 PUBLISH_TOOLS = frozenset({"publish_content", "publish_with_video"})
+AI_DECLARATION = "笔记含AI合成内容"
+DECLARATIONS = frozenset({AI_DECLARATION,"自主拍摄","来源转载","虚构演绎，仅供娱乐","内容包含营销广告","无需声明"})
 TERMINAL = frozenset({"submitted", "failed", "unknown"})
 MESSAGES = {
     "queued": "已受理，尚未提交。请调用 get_publish_status，不能当作发布成功或重新发布。",
@@ -29,6 +32,32 @@ def tool_result(data, *, error=False):
             "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}]}
 
 
+def validate_publish_arguments(tool, arguments):
+    """Match publication schema boundaries before a durable job can be accepted."""
+    common={"title","content","tags","products","schedule_at","visibility","is_original",
+            "ai_generated","content_declaration","declaration_details","idempotency_key"}
+    media="images" if tool=="publish_content" else "video"
+    if set(arguments)-common-{media}:
+        raise ValueError("Unsupported publishing argument")
+    for key in ("title","content"):
+        if key not in arguments or not isinstance(arguments[key],str):
+            raise ValueError(key+" must be a string")
+    if media=="images":
+        images=arguments.get("images")
+        if not isinstance(images,list) or not images or any(not isinstance(p,str) for p in images):
+            raise ValueError("images must contain at least one string path or URL")
+    elif not isinstance(arguments.get("video"),str):
+        raise ValueError("video must be a string")
+    for key in ("tags","products"):
+        value=arguments.get(key)
+        if value is not None and (not isinstance(value,list) or any(not isinstance(p,str) for p in value)):
+            raise ValueError(key+" must be an array of strings or null")
+    for key in ("schedule_at","visibility"):
+        if key in arguments and not isinstance(arguments[key],str):
+            raise ValueError(key+" must be a string")
+    canonical(tool,arguments)  # Also validate declaration conflicts, booleans and key format before admission.
+
+
 def canonical(tool, arguments):
     args = dict(arguments)
     key = args.pop("idempotency_key", None)
@@ -37,6 +66,41 @@ def canonical(tool, arguments):
         raise ValueError("idempotency_key must be 1-128 printable non-space ASCII characters")
     # Match the Go argument defaults without changing caller-supplied values.
     normalized = dict(args)
+    if "ai_generated" in args and type(args["ai_generated"]) is not bool:
+        raise ValueError("ai_generated must be a boolean")
+    if "is_original" in args and type(args["is_original"]) is not bool:
+        raise ValueError("is_original must be a boolean")
+    declaration = args.get("content_declaration", "")
+    if "content_declaration" in args and (not isinstance(declaration,str) or declaration not in DECLARATIONS):
+        raise ValueError("content_declaration must be a real platform option")
+    if declaration and "ai_generated" in args and ((args["ai_generated"] and declaration!=AI_DECLARATION) or
+                                                   (not args["ai_generated"] and declaration==AI_DECLARATION)):
+        raise ValueError("content_declaration conflicts with ai_generated")
+    details=args.get("declaration_details")
+    if details is not None and (not isinstance(details,dict) or set(details)-{"shoot_location","shoot_date","source_media"} or
+                                any(not isinstance(value,str) for value in details.values())):
+        raise ValueError("declaration_details must contain only string shoot_location, shoot_date or source_media")
+    detail={key:value.strip() for key,value in (details or {}).items() if value.strip()}
+    if declaration=="自主拍摄":
+        if not detail.get("shoot_location") or not detail.get("shoot_date") or detail.get("source_media"):
+            raise ValueError("自主拍摄 requires declaration_details.shoot_location and shoot_date, not source_media")
+        try:
+            date=datetime.date.fromisoformat(detail["shoot_date"])
+            if date.isoformat()!=detail["shoot_date"]:raise ValueError()
+        except ValueError:
+            raise ValueError("shoot_date must be YYYY-MM-DD") from None
+    elif declaration=="来源转载":
+        if not detail.get("source_media") or detail.get("shoot_location") or detail.get("shoot_date"):
+            raise ValueError("来源转载 requires declaration_details.source_media, not shooting fields")
+    elif detail:
+        raise ValueError("declaration_details only applies to source declarations")
+    normalized.pop("declaration_details",None)
+    if detail:normalized["declaration_details"]=detail
+    normalized.pop("content_declaration",None)
+    if declaration:
+        normalized["ai_generated"] = declaration==AI_DECLARATION
+        if declaration!=AI_DECLARATION:
+            normalized["content_declaration"] = declaration
     normalized.setdefault("ai_generated", True)
     for name, default in (("tags", []), ("products", []), ("schedule_at", ""),
                           ("visibility", "公开可见")):
@@ -44,6 +108,9 @@ def canonical(tool, arguments):
             normalized[name] = default
     if tool == "publish_content":
         normalized.setdefault("is_original", False)
+    elif normalized.get("is_original") is False:
+        # Older video jobs had no original flag: explicit false remains their exact fingerprint.
+        normalized.pop("is_original")
     encoded = json.dumps([tool, normalized], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
     key_hash = hashlib.sha256(key.encode()).hexdigest() if key is not None else None

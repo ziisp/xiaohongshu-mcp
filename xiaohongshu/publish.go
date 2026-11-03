@@ -19,15 +19,17 @@ import (
 
 // PublishImageContent 发布图文内容
 type PublishImageContent struct {
-	AIGenerated  *bool // 默认声明 AI 合成内容，显式 false 才跳过
-	Title        string
-	Content      string
-	Tags         []string
-	ImagePaths   []string
-	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
-	IsOriginal   bool       // 是否声明原创
-	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products     []string   // 商品关键词列表，用于绑定带货商品
+	DeclarationDetails *ContentDeclarationDetails
+	ContentDeclaration string
+	AIGenerated        *bool // 默认声明 AI 合成内容，显式 false 才跳过
+	Title              string
+	Content            string
+	Tags               []string
+	ImagePaths         []string
+	ScheduleTime       *time.Time // 定时发布时间，nil 表示立即发布
+	IsOriginal         bool       // 是否声明原创
+	Visibility         string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products           []string   // 商品关键词列表，用于绑定带货商品
 }
 
 type PublishAction struct {
@@ -95,7 +97,7 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 
 	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, visibility=%s, products=%v", content.Title, len(content.ImagePaths), tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products)
 
-	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.AIGenerated); err != nil {
+	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.AIGenerated, ContentDeclarationOptions{content.ContentDeclaration, content.DeclarationDetails}); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -346,7 +348,18 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string, aiGenerated *bool) error {
+func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string, aiGenerated *bool, options ...ContentDeclarationOptions) error {
+	option := ContentDeclarationOptions{}
+	if len(options) > 0 {
+		option = options[0]
+	}
+	declaration, err := ResolveContentDeclaration(option.Label, aiGenerated)
+	if err != nil {
+		return err
+	}
+	if err := ValidateContentDeclarationDetails(declaration, option.Details); err != nil {
+		return err
+	}
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
 		return errors.Wrap(err, "查找标题输入框失败")
@@ -406,12 +419,17 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
-	if aiGenerated == nil || *aiGenerated {
-		if err := setAIContentDeclaration(page); err != nil {
-			return errors.Wrap(err, "AI 内容声明未确认，已停止发布")
+	if declaration != "" {
+		if err := setContentDeclaration(page, declaration, option.Details); err != nil {
+			return errors.Wrapf(err, "内容声明（%s）未确认，已停止发布", declaration)
 		}
 	}
 
+	if isOriginal {
+		if err := verifyOriginalDeclaration(page); err != nil {
+			return err
+		}
+	}
 	if err := clickPublishButton(page); err != nil {
 		return err
 	}
@@ -894,11 +912,14 @@ func isElementVisible(elem *rod.Element) bool {
 	return visible
 }
 
-// hasExactClass 检查 class 字符串是否包含指定的完整类名（单词边界匹配）
+// hasExactClass 按 CSS class token 匹配，连字符不是类名边界。
 func hasExactClass(classStr, className string) bool {
-	pattern := `\b` + regexp.QuoteMeta(className) + `\b`
-	matched, _ := regexp.MatchString(pattern, classStr)
-	return matched
+	for _, token := range strings.Fields(classStr) {
+		if token == className {
+			return true
+		}
+	}
+	return false
 }
 
 // setVisibility 设置可见范围
@@ -1000,12 +1021,14 @@ func setDateTime(ctx context.Context, page *rod.Page, t time.Time) error {
 
 // setOriginal 设置原创声明
 func setOriginal(page *rod.Page) error {
+	pp := page.Timeout(8 * time.Second)
+	defer pp.CancelTimeout()
 	// 根据小红书创作者页面的实际结构：
 	// div.custom-switch-card 包含 span.has-tips 文本为"原创声明"
 	// 开关是 div.d-switch 组件
 
 	// 查找包含"原创声明"文本的 custom-switch-card
-	switchCards, err := page.Elements("div.custom-switch-card")
+	switchCards, err := pp.Elements("div.custom-switch-card")
 	if err != nil {
 		return errors.Wrap(err, "查找原创声明卡片失败")
 	}
@@ -1028,15 +1051,12 @@ func setOriginal(page *rod.Page) error {
 		}
 
 		// 检查开关是否已打开
-		checked, err := switchElem.Eval(`() => {
-			const input = this.querySelector('input[type="checkbox"]');
-			return input ? input.checked : false;
-		}`)
+		checked, err := originalSwitchChecked(switchElem)
 		if err != nil {
 			continue
 		}
 
-		if checked.Value.Bool() {
+		if checked {
 			slog.Info("原创声明已开启")
 			return nil
 		}
@@ -1049,19 +1069,92 @@ func setOriginal(page *rod.Page) error {
 		time.Sleep(500 * time.Millisecond)
 
 		// 处理原创声明确认弹窗
-		if err := confirmOriginalDeclaration(page); err != nil {
+		if err := confirmOriginalDeclaration(pp); err != nil {
 			return errors.Wrap(err, "确认原创声明失败")
 		}
 
-		slog.Info("已开启原创声明")
-		return nil
+		for {
+			// 弹窗确认后重新定位，不能用点击成功代替开关已选中。
+			cards, err := pp.Elements("div.custom-switch-card")
+			if err != nil {
+				return err
+			}
+			for _, current := range cards {
+				text, err := current.Text()
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(text, "原创声明") {
+					continue
+				}
+				sw, err := current.Element("div.d-switch")
+				if err != nil {
+					return err
+				}
+				on, err := originalSwitchChecked(sw)
+				if err != nil {
+					return err
+				}
+				if on {
+					return nil
+				}
+			}
+			select {
+			case <-pp.GetContext().Done():
+				return errors.Wrap(pp.GetContext().Err(), "未确认原创声明选中状态")
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	}
 
 	return errors.New("未找到原创声明选项")
 }
 
-// confirmOriginalDeclaration 交互（勾选须知、点声明按钮）走 go-rod 点击；
-// 仅用只读 Eval 读取 checkbox 勾选态（不产生交互，无法用属性判断的自定义组件才用）。
+func originalSwitchChecked(switchElem *rod.Element) (bool, error) {
+	input, err := switchElem.Element(`input[type="checkbox"]`)
+	if err != nil {
+		return false, err
+	}
+	checked, err := input.Property("checked")
+	if err != nil {
+		return false, err
+	}
+	return checked.Bool(), nil
+}
+
+// 在全部表单操作完成后复核，避免来源/商品等联动使原创开关复位。
+func verifyOriginalDeclaration(page *rod.Page) error {
+	pp := page.Timeout(3 * time.Second)
+	defer pp.CancelTimeout()
+	cards, err := pp.Elements("div.custom-switch-card")
+	if err != nil {
+		return err
+	}
+	for _, card := range cards {
+		text, err := card.Text()
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(text, "原创声明") {
+			continue
+		}
+		sw, err := card.Element("div.d-switch")
+		if err != nil {
+			return err
+		}
+		on, err := originalSwitchChecked(sw)
+		if err != nil {
+			return err
+		}
+		if on {
+			return nil
+		}
+		return errors.New("原创声明在发布前未保持开启，已停止发布")
+	}
+	return errors.New("发布前未找到原创声明控件，已停止发布")
+}
+
+// confirmOriginalDeclaration 勾选须知、点击声明按钮均走原生交互。
 func confirmOriginalDeclaration(page *rod.Page) error {
 	time.Sleep(800 * time.Millisecond) // 技术等待：等确认弹窗渲染
 
@@ -1126,15 +1219,24 @@ func checkFooterCheckbox(footer *rod.Element) error {
 		return errors.Wrap(err, "未找到须知 checkbox")
 	}
 
-	// 只读判断当前是否已勾选（隐藏 input.checked 或 simulator 上的 checked 态）
-	checked, err := cb.Eval(`() => {
-		const input = this.querySelector('input[type="checkbox"]');
-		return (input && input.checked) || this.querySelector('.checked') !== null;
-	}`)
+	has, input, err := cb.Has(`input[type="checkbox"]`)
 	if err != nil {
-		return errors.Wrap(err, "读取 checkbox 状态失败")
+		return err
 	}
-	if checked.Value.Bool() {
+	if has {
+		checked, err := input.Property("checked")
+		if err != nil {
+			return err
+		}
+		if checked.Bool() {
+			return nil
+		}
+	}
+	has, _, err = cb.Has(".checked")
+	if err != nil {
+		return err
+	}
+	if has {
 		return nil
 	}
 

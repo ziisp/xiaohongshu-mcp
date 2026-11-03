@@ -156,7 +156,7 @@ func TestPublishStopsWhenAIContentDeclarationFails(t *testing.T) {
 				defer cancel()
 				var err error
 				if video {
-					err = submitPublishVideo(ctx, p.Context(ctx), "test", "test", nil, nil, "", nil, tc.ai)
+					err = submitPublishVideo(ctx, p.Context(ctx), "test", "test", nil, nil, false, "", nil, tc.ai)
 				} else {
 					err = submitPublish(ctx, p.Context(ctx), "test", "test", nil, nil, false, "", nil, tc.ai)
 				}

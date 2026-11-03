@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from publish_jobs import PublishJobs
+from publish_jobs import PublishJobs, canonical
 
 
 class PublishJobTests(unittest.IsolatedAsyncioTestCase):
@@ -124,5 +124,54 @@ class PublishJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls,1)
         with self.assertRaises(ValueError):
             await self.jobs.submit("owner","publish_content",{"title":"3"},self.delayed)
+
+    async def test_declaration_equivalence_keeps_old_default_fingerprints(self):
+        import hashlib,json
+        for tool,args in (("publish_content",{"title":"same","images":["/tmp/a.png"]}),
+                          ("publish_with_video",{"title":"same","video":"/tmp/a.mp4"})):
+            normalized=dict(args,ai_generated=True,tags=[],products=[],schedule_at="",visibility="公开可见")
+            if tool=="publish_content": normalized["is_original"]=False
+            legacy=hashlib.sha256(json.dumps([tool,normalized],sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+            self.assertEqual(canonical(tool,args)[1],legacy)
+            self.assertEqual(canonical(tool,dict(args,content_declaration="笔记含AI合成内容"))[1],legacy)
+            if tool=="publish_with_video":
+                self.assertEqual(canonical(tool,dict(args,is_original=False))[1],legacy)
+                self.assertNotEqual(canonical(tool,dict(args,is_original=True))[1],legacy)
+            source=dict(args,content_declaration="自主拍摄",declaration_details={"shoot_location":"Fixture Point","shoot_date":"2026-11-01"})
+            first=canonical(tool,source)[1]
+            self.assertEqual(first,canonical(tool,dict(source,ai_generated=False))[1])
+            self.assertNotEqual(first,canonical(tool,dict(source,declaration_details={"shoot_location":"Other Point","shoot_date":"2026-11-01"}))[1])
+            self.assertNotEqual(first,canonical(tool,args)[1])
+            self.assertNotEqual(canonical(tool,dict(args,content_declaration="无需声明"))[1],canonical(tool,dict(args,ai_generated=False))[1])
+
+    async def test_new_declaration_request_cannot_replay_old_unknown_job(self):
+        tool="publish_with_video";args={"video":"old.mp4"}
+        fingerprint=canonical(tool,args)[1]
+        self.jobs.db.execute("INSERT INTO jobs VALUES ('legacy','owner',?,?,NULL,'unknown',1,1,NULL)",(tool,fingerprint))
+        self.jobs.db.commit()
+        retry=await self.jobs.submit("owner",tool,dict(args,content_declaration="笔记含AI合成内容",is_original=False,idempotency_key="new"),self.delayed)
+        self.assertEqual(retry["publication_id"],"legacy")
+        self.assertEqual(self.calls,0)
+
+    async def test_conflicting_or_non_platform_declaration_never_enters_queue(self):
+        for args in ({"content_declaration":"个人观点，仅供参考"},
+                     {"content_declaration":"自主拍摄","ai_generated":True},
+                     {"content_declaration":"笔记含AI合成内容","ai_generated":False},
+                     {"content_declaration":None},{"is_original":"true"}):
+            with self.assertRaises(ValueError):
+                await self.jobs.submit("owner","publish_with_video",args,self.delayed)
+        self.assertEqual(self.jobs.recent("owner"),[])
+
+    async def test_source_details_validate_before_acceptance_and_preserve_old_defaults(self):
+        for args in ({"content_declaration":"自主拍摄"},
+                     {"content_declaration":"自主拍摄","declaration_details":{"shoot_location":"Fixture Point","shoot_date":"2026-02-30"}},
+                     {"content_declaration":"来源转载","declaration_details":{}},
+                     {"declaration_details":{"source_media":"unexpected"}},
+                     {"declaration_details":{"unknown":"value"}}):
+            with self.assertRaises(ValueError):await self.jobs.submit("owner","publish_with_video",args,self.delayed)
+        baseline=canonical("publish_with_video",{"video":"x"})[1]
+        self.assertEqual(baseline,canonical("publish_with_video",{"video":"x","declaration_details":{}})[1])
+        self.assertEqual(baseline,canonical("publish_with_video",{"video":"x","declaration_details":None})[1])
+        self.assertEqual(self.jobs.recent("owner"),[])
 
 if __name__ == "__main__": unittest.main()

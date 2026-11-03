@@ -48,7 +48,7 @@ func TestNativePublishFailurePhases(t *testing.T) {
 				defer cancel()
 				var err error
 				if video {
-					err = submitPublishVideo(ctx, p.Context(ctx), "test", "test", nil, nil, "", nil, nil)
+					err = submitPublishVideo(ctx, p.Context(ctx), "test", "test", nil, nil, false, "", nil, nil)
 				} else {
 					err = submitPublish(ctx, p.Context(ctx), "test", "test", nil, nil, false, "", nil, nil)
 				}

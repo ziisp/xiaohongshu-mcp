@@ -51,10 +51,10 @@ class LongPublishTests(unittest.TestCase):
             return response.json()['result']['structuredContent']
         with TestClient(app,base_url=DOMAIN) as client:
             start=time.monotonic()
-            first=call(client,'publish_with_video',{'video':'synthetic.mp4','idempotency_key':'long-call'})
+            first=call(client,'publish_with_video',{'title':'test','content':'test','video':'synthetic.mp4','idempotency_key':'long-call'})
             self.assertLess(time.monotonic()-start,4)
             self.assertIn(first['status'],('queued','running'))
-            retry=call(client,'publish_with_video',{'video':'synthetic.mp4','idempotency_key':'long-call'})
+            retry=call(client,'publish_with_video',{'title':'test','content':'test','video':'synthetic.mp4','idempotency_key':'long-call'})
             self.assertEqual(first['publication_id'],retry['publication_id'])
             for _ in range(3):
                 result=call(client,'get_publish_status',{'publication_id':first['publication_id'],'wait_seconds':15})

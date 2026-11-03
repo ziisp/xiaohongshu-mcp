@@ -169,6 +169,19 @@ DELETE /api/v1/login/cookies
 
 ### 3. 内容发布
 
+图文、视频共用 `content_declaration` 单选参数：`笔记含AI合成内容`、`自主拍摄`、`来源转载`、`虚构演绎，仅供娱乐`、`内容包含营销广告`、`无需声明`。前五项为真实平台菜单文案；“无需声明”使用平台原生清除按钮并核验空值。未提供声明参数时仍默认 AI；平台缺项、不可选或未确认选中时停止发布，不使用不存在的“个人观点”等选项。
+
+指定其他声明时传 `content_declaration`，不要同时传 `ai_generated:true`；显式 `false` 与 AI 声明也会冲突并在处理素材前被拒绝。旧调用仅传 `ai_generated:false` 仍保持不主动修改控件，与明确清除的“无需声明”不同。`is_original` 是独立的原创声明；图文和视频都支持，开关在发布前未保持开启则停止。
+
+两种来源声明还必须填写平台弹窗的真实信息：
+- `自主拍摄`：`declaration_details.shoot_location` 为平台联想中唯一匹配的准确地点名称；`shoot_date` 为真实拍摄日期（`YYYY-MM-DD`）。不会自动选择相近或同名的其他地点。
+- `来源转载`：`declaration_details.source_media` 为真实媒体名称。
+
+其他声明不需要 `declaration_details`。缺信息、地点不唯一、日期未保留、确认按钮不可用或弹窗未关闭，均停止发布；不能只看选中标签就当作声明已完成。例如，转载声明的参数片段为：
+```json
+{"content_declaration":"来源转载","declaration_details":{"source_media":"实际来源媒体名称"}}
+```
+
 以下 REST 接口同步执行。成功仅表示在可信创作平台 `/publish/success` 页面确认提交，不保证已公开或审核通过。点击发布后的确认超时返回 HTTP 409、`code: PUBLISH_RESULT_UNKNOWN`、`details: {"status":"unknown","retry_safe":false}`；先检查平台笔记管理，不能直接重试。图文与视频共用此规则。
 
 本部署域名 MCP 网关的两个发布工具另采用后台作业：快速返回 `publication_id` 和状态；通过 `get_publish_status`（可选 `publication_id`、`wait_seconds: 0..15`）查询终态。`queued/running` 不等于提交成功；`submitted` 已确认提交；`failed` 在提交前失败、`retry_safe=true`；`unknown` 不可自动重发。省略作业号列出本账号最近 10 次作业。可选 `idempotency_key` 标识一次发布意图，重试复用同一键；相同内容的在途/未知作业不能用换键绕过。此能力不改变上述 REST 请求格式。
@@ -201,7 +214,9 @@ Content-Type: application/json
 - `title` (string, required): 笔记标题
 - `content` (string, required): 笔记内容
 - `images` (array, required): 图片URL数组，至少包含一张图片
-- `ai_generated` (boolean, optional, default `true`): 省略或 `true` 时在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。与 `is_original` 不同，也不是向正文添加文字。
+- `content_declaration` (string, optional): 平台内容声明，使用本节列出的真实选项；省略默认 AI
+- `declaration_details` (object, optional): 选择自主拍摄/来源转载时必填，字段见本节说明
+- `ai_generated` (boolean, optional, default `true`): 未指定 `content_declaration` 时，省略或 `true` 在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。与 `is_original` 不同，也不是向正文添加文字。
 - `tags` (array, optional): 标签数组
 - `schedule_at` (string, optional): 定时发布时间，ISO8601 格式如 `2024-01-20T10:30:00+08:00`，支持1小时至14天内。不填则立即发布
 - `is_original` (boolean, optional): 是否声明原创，`true` 为声明原创，不填则不声明
@@ -247,10 +262,13 @@ Content-Type: application/json
 - `title` (string, required): 视频标题
 - `content` (string, required): 视频内容描述
 - `video` (string, required): 本地视频文件绝对路径
-- `ai_generated` (boolean, optional, default `true`): 省略或 `true` 时在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。
+- `content_declaration` (string, optional): 与图文一致的平台内容声明，省略默认 AI
+- `declaration_details` (object, optional): 与图文一致，选择自主拍摄/来源转载时必填
+- `ai_generated` (boolean, optional, default `true`): 未指定 `content_declaration` 时，省略或 `true` 在平台选择“笔记含AI合成内容”，确认选中后才发布；找不到控件、选择失败或未确认选中均中止发布。仅显式 `false` 跳过，不主动修改声明。
 - `tags` (array, optional): 标签数组
 - `schedule_at` (string, optional): 定时发布时间，ISO8601 格式如 `2024-01-20T10:30:00+08:00`，支持1小时至14天内。不填则立即发布
 - `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
+- `is_original` (boolean, optional): 视频原创声明，默认 false；与内容声明独立，true 时必须确认开关最终保持开启
 - `products` (array, optional): 商品关键词列表，用于绑定带货商品。填写商品名称或商品ID，自动搜索并选择第一个匹配结果，需账号已开通商品功能
 
 **响应**

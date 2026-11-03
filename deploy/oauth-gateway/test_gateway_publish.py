@@ -38,8 +38,13 @@ class GatewayPublishTests(unittest.TestCase):
         return TestClient(app,base_url=DOMAIN)
 
     def call(self,client,name,args=None,token="authelia_at_test"):
+        arguments=args or {}
+        if name in self.module.PUBLISH_TOOLS:
+            defaults={"title":"test","content":"test"}
+            defaults.update({"images":["/tmp/synthetic.png"]} if name=="publish_content" else {"video":"/tmp/synthetic.mp4"})
+            arguments=dict(defaults,**arguments)
         return client.post("/mcp",headers={"Authorization":"Bearer "+token},
-            json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args or {}}})
+            json={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}})
 
     def data(self,response):
         self.assertEqual(response.status_code,200,response.text)
@@ -116,5 +121,18 @@ class GatewayPublishTests(unittest.TestCase):
             response = self.call(client,"get_publish_status",{"publication_id":first["publication_id"],"wait_seconds":1})
             self.assertEqual(self.data(response)["status"],"unknown")
             self.assertNotIn("fake-introspection-secret",response.text)
+
+    def test_invalid_publish_arguments_are_rejected_before_durable_acceptance(self):
+        with self.client() as client:
+            for args in ({"title":"t","content":"c","images":[]},
+                         {"title":"t","content":"c","images":None},
+                         {"title":"t","content":"c","images":[123]},
+                         {"title":"t","images":["/tmp/a.png"]},
+                         {"title":"t","content":"c","images":["/tmp/a.png"],"extra":1}):
+                response=client.post("/mcp",headers={"Authorization":"Bearer authelia_at_test"},json={
+                    "jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"publish_content","arguments":args}})
+                self.assertTrue(response.json()["result"]["isError"])
+            self.assertEqual(self.calls,[])
+            self.assertEqual(self.data(self.call(client,"get_publish_status"))["publications"],[])
 
 if __name__ == "__main__": unittest.main()

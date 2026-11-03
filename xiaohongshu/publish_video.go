@@ -14,15 +14,17 @@ import (
 
 // PublishVideoContent 发布视频内容
 type PublishVideoContent struct {
-	AIGenerated  *bool // 默认声明 AI 合成内容，显式 false 才跳过
-	Title        string
-	Content      string
-	Tags         []string
-	VideoPath    string
-	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
-	IsOriginal   bool       // 是否声明原创
-	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
-	Products     []string   // 商品关键词列表，用于绑定带货商品
+	DeclarationDetails *ContentDeclarationDetails
+	ContentDeclaration string
+	AIGenerated        *bool // 默认声明 AI 合成内容，显式 false 才跳过
+	Title              string
+	Content            string
+	Tags               []string
+	VideoPath          string
+	ScheduleTime       *time.Time // 定时发布时间，nil 表示立即发布
+	IsOriginal         bool       // 是否声明原创
+	Visibility         string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+	Products           []string   // 商品关键词列表，用于绑定带货商品
 }
 
 // NewPublishVideoAction 进入发布页并切换到"上传视频"
@@ -70,7 +72,7 @@ func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoCo
 		return errors.Wrap(err, "小红书上传视频失败")
 	}
 
-	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.AIGenerated); err != nil {
+	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.AIGenerated, ContentDeclarationOptions{content.ContentDeclaration, content.DeclarationDetails}); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
@@ -107,7 +109,18 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 }
 
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string, aiGenerated *bool) error {
+func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string, aiGenerated *bool, options ...ContentDeclarationOptions) error {
+	option := ContentDeclarationOptions{}
+	if len(options) > 0 {
+		option = options[0]
+	}
+	declaration, err := ResolveContentDeclaration(option.Label, aiGenerated)
+	if err != nil {
+		return err
+	}
+	if err := ValidateContentDeclarationDetails(declaration, option.Details); err != nil {
+		return err
+	}
 	// 标题
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
@@ -159,12 +172,17 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
-	if aiGenerated == nil || *aiGenerated {
-		if err := setAIContentDeclaration(page); err != nil {
-			return errors.Wrap(err, "AI 内容声明未确认，已停止发布")
+	if declaration != "" {
+		if err := setContentDeclaration(page, declaration, option.Details); err != nil {
+			return errors.Wrapf(err, "内容声明（%s）未确认，已停止发布", declaration)
 		}
 	}
 
+	if isOriginal {
+		if err := verifyOriginalDeclaration(page); err != nil {
+			return err
+		}
+	}
 	if err := clickPublishButton(page); err != nil {
 		return err
 	}

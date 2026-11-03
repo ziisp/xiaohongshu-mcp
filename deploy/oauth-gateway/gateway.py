@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from publish_jobs import PUBLISH_TOOLS, PublishJobs, tool_result
+from publish_jobs import PUBLISH_TOOLS, PublishJobs, tool_result, validate_publish_arguments
 
 PUBLIC_ORIGIN = os.environ.get("GATEWAY_PUBLIC_ORIGIN", "https://43.133.185.155")
 _origin = urlsplit(PUBLIC_ORIGIN)
@@ -457,6 +457,11 @@ def create_app(settings=None, *, transport=None, publish_db=None, foreground_wai
                             raise ValueError("Invalid publication_id")
                         data = await jobs.wait(owner, job_id, seconds)
                 else:
+                    try:
+                        validate_publish_arguments(name,args)
+                    except ValueError as error:
+                        return JSONResponse({"jsonrpc":"2.0","id":message["id"],"result":tool_result({
+                            "status":"failed","phase":"pre_submit","retry_safe":True,"message":str(error)},error=True)},headers=SAFE_HEADERS)
                     async def execute(arguments):
                         backend_message = dict(message, params={"name": name, "arguments": arguments})
                         publication_request = httpx.Request("POST", BACKEND_URL, headers=headers,
@@ -476,7 +481,7 @@ def create_app(settings=None, *, transport=None, publish_db=None, foreground_wai
                     data = await jobs.wait(owner, data["publication_id"], foreground_wait)
                 result = tool_result(data)
             except ValueError as error:
-                result = tool_result({"message": str(error)}, error=True)
+                result = tool_result({"message":str(error)}, error=True)
             return JSONResponse({"jsonrpc": "2.0", "id": message["id"], "result": result}, headers=SAFE_HEADERS)
         backend_request = httpx.Request("POST", BACKEND_URL, headers=headers, content=bytes(raw))
         try:

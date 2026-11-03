@@ -208,9 +208,13 @@ class GatewayOriginTests(unittest.TestCase):
         with self.make_client(DOMAIN, full_scope_enabled=True, scopes='mcp.read mcp.full offline_access',
                               backend_calls=calls) as client:
             for name in FULL_TOOLS:
+                args={}
+                if name in ('publish_content','publish_with_video'):
+                    args={'title':'test','content':'test'}
+                    args.update({'images':['/tmp/synthetic.png']} if name=='publish_content' else {'video':'/tmp/synthetic.mp4'})
                 response = client.post('/mcp', headers={'Authorization': 'Bearer authelia_at_synthetic'},
                                        json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
-                                             'params': {'name': name, 'arguments': {}}})
+                                             'params': {'name': name, 'arguments': args}})
                 self.assertEqual(response.status_code, 200, name)
                 if name in ('publish_content','publish_with_video'):
                     self.assertEqual(response.json()['result']['structuredContent']['status'],'submitted')

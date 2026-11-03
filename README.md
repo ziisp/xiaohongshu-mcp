@@ -13,8 +13,10 @@ MCP for 小红书 / xiaohongshu.com。让你的 AI 助手直接访问小红书�
 ### 本分支：默认 AI 声明与可靠发布
 
 - 图文、视频的 AI 声明默认开启，使用 go-rod 原生操作；声明未确认就停止发布。
+- 可明确选择平台真实内容声明：AI、自主拍摄、来源转载、虚构演绎、营销广告；“无需声明”使用平台原生清除按钮。来源弹窗必填地点/日期或媒体名，信息不足就停发。视频也支持独立的原创声明，发布前复核选中状态。
+- 已同步官方 main 的安全依赖、跨站请求防护、搜索竞态、评论回复定位及发布稳定性修复。
 - 仅可信创作平台成功页确认已提交；登录/错误跳转不算成功，点击后的未知结果不能自动重发。
-- [云端 OAuth 网关](deploy/oauth-gateway/README.md) 提供持久化后台发布、幂等保护及 `get_publish_status`，包含源码、配置模板和 35 项回归测试。直接 Go MCP/REST 仍同步执行。
+- [云端 OAuth 网关](deploy/oauth-gateway/README.md) 提供持久化后台发布、幂等保护及 `get_publish_status`，包含源码、配置模板和回归测试。直接 Go MCP/REST 仍同步执行。
 
 ### 🚀 快速开始：选择最适合你的版本
 
@@ -893,7 +895,8 @@ npx mcporter list xiaohongshu-mcp
 - `get_login_qrcode` - 获取登录二维码，返回 Base64 图片和超时时间（无参数）
 - `delete_cookies` - 删除 cookies 文件，重置登录状态，删除后需要重新登录（无参数）
 - `publish_content` - 发布图文内容到小红书（必需：title, content, images）
-  - `ai_generated`: 默认 `true`；省略参数也会选择并确认平台“笔记含AI合成内容”声明，失败就停止发布。仅显式 `false` 关闭，不修改声明。不是“原创声明”
+  - `content_declaration`、`declaration_details`: [平台声明选项及来源必填信息](docs/API.md#3-内容发布)，省略时默认 AI；确认失败停止发布
+  - `ai_generated`: 兼容旧参数；未指定其他内容声明时默认 `true`，仅显式 `false` 跳过且不修改控件。显式值不得与内容声明冲突，不是“原创声明”
   - `images`: 图片路径列表（至少1张），支持 HTTP 链接或本地绝对路径，推荐使用本地路径
   - `tags`: 话题标签列表（可选），如 `["美食", "旅行", "生活"]`
   - `schedule_at`: 定时发布时间（可选），ISO8601 格式，支持 1 小时至 14 天内
@@ -901,8 +904,10 @@ npx mcporter list xiaohongshu-mcp
   - `visibility`: 可见范围（可选），支持 `公开可见`（默认）、`仅自己可见`、`仅互关好友可见`
   - `products`: 商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]
 - `publish_with_video` - 发布视频内容到小红书（必需：title, content, video）
-  - `ai_generated`: 默认 `true`；省略参数也会选择并确认平台“笔记含AI合成内容”声明，失败就停止发布。仅显式 `false` 关闭，不修改声明
+  - `content_declaration`、`declaration_details`: 与图文一致的平台声明及来源信息；默认 AI，失败停止发布
+  - `ai_generated`: 兼容旧参数；未指定其他内容声明时默认 `true`，仅显式 `false` 跳过且不修改控件，显式值不得与声明冲突
   - `video`: 本地视频文件绝对路径（仅支持单个视频文件）
+  - `is_original`: 是否声明原创（可选），默认不声明；请求原创时在发布前再次复核开关
   - `tags`: 话题标签列表（可选），如 `["美食", "旅行", "生活"]`
   - `schedule_at`: 定时发布时间（可选），ISO8601 格式，支持 1 小时至 14 天内
   - `visibility`: 可见范围（可选），支持 `公开可见`（默认）、`仅自己可见`、`仅互关好友可见`
