@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/xiaohongshu-mcp/humanize"
 )
 
@@ -31,26 +30,11 @@ type PublishVideoContent struct {
 func NewPublishVideoAction(page *rod.Page) (*PublishAction, error) {
 	pp := page.Timeout(300 * time.Second)
 
-	if err := ensureCreatorSession(pp); err != nil {
+	const tabName = "上传视频"
+	if err := openCreatorPublishPage(pp, tabName); err != nil {
 		return nil, err
 	}
-
-	if err := pp.Navigate(urlOfPublic); err != nil {
-		return nil, errors.Wrap(err, "导航到发布页面失败")
-	}
-
-	// 使用 WaitLoad 代替 WaitIdle（更宽松）
-	if err := pp.WaitLoad(); err != nil {
-		logrus.Warnf("等待页面加载出现问题: %v，继续尝试", err)
-	}
-	time.Sleep(2 * time.Second)
-
-	if err := pp.WaitDOMStable(time.Second, 0.1); err != nil {
-		logrus.Warnf("等待 DOM 稳定出现问题: %v，继续尝试", err)
-	}
-	time.Sleep(1 * time.Second)
-
-	if err := mustClickPublishTab(pp, "上传视频"); err != nil {
+	if err := mustClickPublishTab(pp, tabName); err != nil {
 		return nil, errors.Wrap(err, "切换到上传视频失败")
 	}
 

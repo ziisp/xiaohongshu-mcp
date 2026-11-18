@@ -37,8 +37,6 @@ type PublishAction struct {
 }
 
 const (
-	urlOfPublic = `https://creator.xiaohongshu.com/publish/publish?source=official`
-
 	// contentElemTimeout 查找正文输入框的轮询窗口
 	contentElemTimeout = 10 * time.Second
 )
@@ -47,25 +45,11 @@ func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 
 	pp := page.Timeout(300 * time.Second)
 
-	if err := ensureCreatorSession(pp); err != nil {
+	const tabName = "上传图文"
+	if err := openCreatorPublishPage(pp, tabName); err != nil {
 		return nil, err
 	}
-
-	if err := pp.Navigate(urlOfPublic); err != nil {
-		return nil, errors.Wrap(err, "导航到发布页面失败")
-	}
-
-	if err := pp.WaitLoad(); err != nil {
-		logrus.Warnf("等待页面加载出现问题: %v，继续尝试", err)
-	}
-	time.Sleep(2 * time.Second)
-
-	if err := pp.WaitDOMStable(time.Second, 0.1); err != nil {
-		logrus.Warnf("等待 DOM 稳定出现问题: %v，继续尝试", err)
-	}
-	time.Sleep(1 * time.Second)
-
-	if err := mustClickPublishTab(pp, "上传图文"); err != nil {
+	if err := mustClickPublishTab(pp, tabName); err != nil {
 		logrus.Errorf("点击上传图文 TAB 失败: %v", err)
 		return nil, err
 	}
